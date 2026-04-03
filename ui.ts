@@ -1,10 +1,11 @@
 /**
  * TUI rendering helpers — icons, colors, time formatting, deployment list component
+ * Supports monorepo multi-project display with project name column.
  */
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Focusable } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { type VercelDeployment, isCancellable } from "./vercel-cli.js";
+import { type VercelDeployment, type VercelProject, isCancellable } from "./vercel-cli.js";
 
 type DeployState = VercelDeployment["state"];
 
@@ -63,14 +64,24 @@ export function truncateCommitMsg(msg: string, maxLen: number = 50): string {
   return msg.slice(0, maxLen - 1) + "…";
 }
 
+/** Check if deployments span multiple projects */
+function isMultiProject(deployments: VercelDeployment[]): boolean {
+  const names = new Set(deployments.map((d) => d.projectName ?? d.name));
+  return names.size > 1;
+}
+
 export function formatDeploymentLine(
   d: VercelDeployment,
   theme: Theme,
-  width: number
+  width: number,
+  showProject: boolean
 ): string {
   const icon = stateIcon(d.state);
   const colorKey = stateColorKey(d.state);
   const state = theme.fg(colorKey, d.state.padEnd(12));
+  const project = showProject
+    ? theme.fg("accent", truncateCommitMsg(d.projectName ?? d.name, 18).padEnd(20))
+    : "";
   const branch = theme.fg("accent", (d.meta.githubCommitRef ?? "—").padEnd(20));
   const commit = theme.fg(
     "muted",
@@ -81,7 +92,7 @@ export function formatDeploymentLine(
     ? theme.fg("success", "production")
     : theme.fg("dim", "preview");
 
-  const line = `${icon} ${state} ${branch} ${commit} ${time} ${target}`;
+  const line = `${icon} ${state} ${project}${branch} ${commit} ${time} ${target}`;
   return truncateToWidth(line, width);
 }
 
@@ -101,6 +112,7 @@ export class DeploymentListComponent {
   private cancelling = false;
   private cachedWidth?: number;
   private cachedLines?: string[];
+  private multiProject: boolean;
 
   constructor(
     deployments: VercelDeployment[],
@@ -112,6 +124,7 @@ export class DeploymentListComponent {
     this.theme = theme;
     this.onClose = onClose;
     this.onCancel = onCancel;
+    this.multiProject = isMultiProject(deployments);
   }
 
   handleInput(data: string): void {
@@ -181,6 +194,7 @@ export class DeploymentListComponent {
 
     const th = this.theme;
     const lines: string[] = [];
+    const mp = this.multiProject;
 
     lines.push("");
     const title = th.fg("accent", " Vercel Deployments ");
@@ -197,7 +211,8 @@ export class DeploymentListComponent {
       );
     } else {
       // Column headers
-      const header = `   ${th.fg("dim", "STATUS".padEnd(14))}${th.fg("dim", "BRANCH".padEnd(22))}${th.fg("dim", "COMMIT".padEnd(44))}${th.fg("dim", "TIME".padEnd(12))}${th.fg("dim", "TARGET")}`;
+      const projectCol = mp ? th.fg("dim", "PROJECT".padEnd(20)) : "";
+      const header = `   ${th.fg("dim", "STATUS".padEnd(14))}${projectCol}${th.fg("dim", "BRANCH".padEnd(22))}${th.fg("dim", "COMMIT".padEnd(44))}${th.fg("dim", "TIME".padEnd(12))}${th.fg("dim", "TARGET")}`;
       lines.push(truncateToWidth(header, width));
       lines.push(
         `  ${th.fg("borderMuted", "─".repeat(Math.max(0, width - 4)))}`
@@ -209,6 +224,9 @@ export class DeploymentListComponent {
         const icon = stateIcon(d.state);
         const colorKey = stateColorKey(d.state);
         const state = th.fg(colorKey, d.state.padEnd(12));
+        const project = mp
+          ? th.fg("accent", truncateCommitMsg(d.projectName ?? d.name, 18).padEnd(20))
+          : "";
         const branch = th.fg(
           "accent",
           (d.meta.githubCommitRef ?? "—").padEnd(20)
@@ -222,7 +240,7 @@ export class DeploymentListComponent {
           ? th.fg("success", "production")
           : th.fg("dim", "preview");
 
-        const line = `${prefix}${icon} ${state} ${branch} ${commit} ${time} ${target}`;
+        const line = `${prefix}${icon} ${state} ${project}${branch} ${commit} ${time} ${target}`;
         lines.push(truncateToWidth(line, width));
       }
     }
@@ -266,7 +284,7 @@ export class DeploymentListComponent {
 }
 
 /**
- * Overlay component for Ctrl+V shortcut — floating deployment panel
+ * Overlay component for Ctrl+Shift+V shortcut — floating deployment panel
  */
 export class DeploymentOverlayComponent implements Focusable {
   focused = false;
@@ -280,6 +298,7 @@ export class DeploymentOverlayComponent implements Focusable {
   private statusMessage?: { text: string; type: "info" | "success" | "error" };
   private cancelling = false;
   private loading: boolean;
+  private multiProject = false;
 
   constructor(
     deployments: VercelDeployment[] | null,
@@ -294,11 +313,15 @@ export class DeploymentOverlayComponent implements Focusable {
     this.onCancel = onCancel;
     this.onOpenUrl = onOpenUrl;
     this.loading = deployments === null;
+    if (deployments) {
+      this.multiProject = isMultiProject(deployments);
+    }
   }
 
   setDeployments(deployments: VercelDeployment[]): void {
     this.deployments = deployments;
     this.loading = false;
+    this.multiProject = isMultiProject(deployments);
   }
 
   handleInput(data: string): void {
@@ -371,6 +394,7 @@ export class DeploymentOverlayComponent implements Focusable {
     const th = this.theme;
     const innerW = w - 2;
     const lines: string[] = [];
+    const mp = this.multiProject;
 
     const pad = (s: string, len: number) => {
       const vis = visibleWidth(s);
@@ -394,9 +418,10 @@ export class DeploymentOverlayComponent implements Focusable {
       lines.push(row(th.fg("dim", "No deployments found.")));
     } else {
       // Column header
+      const projectCol = mp ? th.fg("dim", "PROJECT".padEnd(18)) : "";
       lines.push(
         row(
-          `${th.fg("dim", "STATUS".padEnd(14))}${th.fg("dim", "BRANCH".padEnd(30))}${th.fg("dim", "COMMIT".padEnd(36))}${th.fg("dim", "TIME".padEnd(10))}${th.fg("dim", "TARGET")}`
+          `${th.fg("dim", "STATUS".padEnd(14))}${projectCol}${th.fg("dim", "BRANCH".padEnd(mp ? 22 : 30))}${th.fg("dim", "COMMIT".padEnd(mp ? 28 : 36))}${th.fg("dim", "TIME".padEnd(10))}${th.fg("dim", "TARGET")}`
         )
       );
       lines.push(
@@ -412,29 +437,37 @@ export class DeploymentOverlayComponent implements Focusable {
         const icon = stateIcon(d.state);
         const colorKey = stateColorKey(d.state);
         const state = th.fg(colorKey, d.state.padEnd(12));
+        const project = mp
+          ? th.fg("accent", truncateCommitMsg(d.projectName ?? d.name, 16).padEnd(18))
+          : "";
+        const branchLen = mp ? 20 : 28;
+        const commitLen = mp ? 26 : 34;
         const branch = th.fg(
           "accent",
-          truncateCommitMsg(d.meta.githubCommitRef ?? "—", 28).padEnd(28)
+          truncateCommitMsg(d.meta.githubCommitRef ?? "—", branchLen).padEnd(branchLen)
         );
         const commit = th.fg(
           "muted",
-          truncateCommitMsg(d.meta.githubCommitMessage ?? "—", 34).padEnd(34)
+          truncateCommitMsg(d.meta.githubCommitMessage ?? "—", commitLen).padEnd(commitLen)
         );
         const time = th.fg("dim", timeAgo(d.createdAt).padEnd(10));
         const target = d.target
           ? th.fg("success", "prod")
           : th.fg("dim", "prev");
 
-        lines.push(row(`${prefix} ${icon} ${state}${branch}${commit}${time}${target}`));
+        lines.push(row(`${prefix} ${icon} ${state}${project}${branch}${commit}${time}${target}`));
       }
 
       // Show URL for selected deployment
       const selected = this.deployments[this.selectedIndex];
       if (selected?.url) {
         lines.push(emptyRow());
+        const projectInfo = selected.projectName
+          ? `${th.fg("dim", "Project:")} ${th.fg("accent", selected.projectName)}  `
+          : "";
         lines.push(
           row(
-            `${th.fg("dim", "URL:")} ${th.fg("accent", `https://${selected.url}`)}`
+            `${projectInfo}${th.fg("dim", "URL:")} ${th.fg("accent", `https://${selected.url}`)}`
           )
         );
       }

@@ -2,23 +2,26 @@
  * Vercel Deployments Extension
  *
  * Shows latest Vercel deployment statuses via the Vercel CLI.
- * - `/deployments` command — interactive TUI list
- * - `vercel_deployments` tool — agent-callable
- * - Status bar indicator — shows latest deploy state
+ * Supports monorepos with multiple Vercel-linked projects.
+ *
+ * - `/deployments` command — interactive TUI list (all projects)
+ * - `vercel_deployments` tool — agent-callable with optional project filter
+ * - Status bar indicator — shows latest deploy state across all projects
+ * - Ctrl+Shift+V — overlay panel with all projects
  */
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 import {
-  listDeployments,
+  discoverProjects,
+  listAllDeployments,
   inspectDeployment,
   cancelDeployment,
   invalidateCache,
   isCancellable,
   type VercelDeployment,
+  type VercelProject,
 } from "./vercel-cli.js";
 import {
   stateIcon,
@@ -30,10 +33,17 @@ import {
 } from "./ui.js";
 
 export default function (pi: ExtensionAPI) {
-  // Only activate in projects linked to Vercel
-  if (!existsSync(join(process.cwd(), ".vercel", "project.json"))) {
+  // Discover all Vercel-linked projects in cwd and immediate subdirs
+  const projects = discoverProjects(process.cwd());
+
+  // Only activate if at least one project is linked
+  if (projects.length === 0) {
     return;
   }
+
+  const isMonorepo = projects.length > 1;
+  const projectNames = projects.map((p) => p.name);
+
   let statusInterval: ReturnType<typeof setInterval> | undefined;
 
   // --- Verify CLI availability ---
@@ -42,14 +52,29 @@ export default function (pi: ExtensionAPI) {
     return result.code === 0;
   }
 
-  // --- Status bar indicator (dim, in footer alongside Pi's native info) ---
+  // --- Status bar indicator ---
   async function updateStatus(ctx: { hasUI: boolean; ui: any }) {
     if (!ctx.hasUI) return;
     try {
       const theme = ctx.ui.theme;
-      const deployments = await listDeployments(pi, { limit: 1 });
-      const latest = deployments[0];
-      if (latest) {
+      const deployments = await listAllDeployments(pi, projects, { limit: projects.length });
+
+      if (deployments.length === 0) return;
+
+      if (isMonorepo) {
+        // Show compact multi-project status
+        const parts = deployments.slice(0, projects.length).map((d) => {
+          const icon = stateIcon(d.state);
+          const name = d.projectName ?? d.name;
+          return `${icon} ${name}`;
+        });
+        ctx.ui.setStatus(
+          "vercel",
+          theme.fg("dim", `▲ Vercel · ${parts.join(" · ")}`)
+        );
+      } else {
+        // Single project — original behavior
+        const latest = deployments[0];
         const branch = latest.meta.githubCommitRef ?? "?";
         const time = timeAgo(latest.createdAt);
         const commit = truncateCommitMsg(latest.meta.githubCommitMessage ?? "", 40);
@@ -75,6 +100,13 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
+    if (ctx.hasUI && isMonorepo) {
+      ctx.ui.notify(
+        `Vercel: ${projects.length} projects detected (${projectNames.join(", ")})`,
+        "info"
+      );
+    }
+
     // Initial status update
     await updateStatus(ctx);
 
@@ -97,18 +129,18 @@ export default function (pi: ExtensionAPI) {
       if (!ctx.hasUI) return;
 
       await ctx.ui.custom<void>(
-        (_tui, theme, _kb, done) => {
+        (_tui: any, theme: any, _kb: any, done: any) => {
           const overlay = new DeploymentOverlayComponent(
             null, // null = loading state
             theme,
             () => done(),
-            (url) => cancelDeployment(pi, url),
-            (url) => { pi.exec("open", [url]); }
+            (url: string) => cancelDeployment(pi, url),
+            (url: string) => { pi.exec("open", [url]); }
           );
 
           // Fetch in background, update when ready
           invalidateCache();
-          listDeployments(pi, { limit: 10 })
+          listAllDeployments(pi, projects, { limit: 15 })
             .then((deployments) => overlay.setDeployments(deployments))
             .catch(() => overlay.setDeployments([]));
 
@@ -124,7 +156,7 @@ export default function (pi: ExtensionAPI) {
 
   // --- /deployments command ---
   pi.registerCommand("deployments", {
-    description: "Show latest Vercel deployments",
+    description: "Show latest Vercel deployments (all projects in monorepo)",
     handler: async (args, ctx) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("/deployments requires interactive mode", "error");
@@ -133,7 +165,7 @@ export default function (pi: ExtensionAPI) {
 
       // Parse filter arg
       const filter = args?.trim().toLowerCase();
-      let opts: { status?: string; environment?: string; limit?: number } = {
+      let opts: { status?: string; environment?: string; limit?: number; project?: string } = {
         limit: 15,
       };
 
@@ -143,18 +175,21 @@ export default function (pi: ExtensionAPI) {
         opts.status = "BUILDING,QUEUED";
       } else if (filter === "error" || filter === "errors") {
         opts.status = "ERROR";
+      } else if (filter && projectNames.map((n) => n.toLowerCase()).includes(filter)) {
+        // Filter by project name
+        opts.project = filter;
       }
 
       try {
         invalidateCache();
-        const deployments = await listDeployments(pi, opts);
+        const deployments = await listAllDeployments(pi, projects, opts);
 
-        await ctx.ui.custom<void>((_tui, theme, _kb, done) => {
+        await ctx.ui.custom<void>((_tui: any, theme: any, _kb: any, done: any) => {
           return new DeploymentListComponent(
             deployments,
             theme,
             () => done(),
-            (url) => cancelDeployment(pi, url)
+            (url: string) => cancelDeployment(pi, url)
           );
         });
       } catch (err: any) {
@@ -167,12 +202,25 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "vercel_deployments",
     label: "Vercel Deployments",
-    description:
-      "List recent Vercel deployments with status, URL, branch, commit message, and timing. Use inspect action to get detailed info about a specific deployment. Use cancel action to cancel a building/queued deployment by URL.",
+    description: [
+      "List recent Vercel deployments with status, URL, branch, commit message, and timing.",
+      isMonorepo
+        ? `This is a monorepo with ${projects.length} Vercel projects: ${projectNames.join(", ")}. Use the project parameter to filter by project name.`
+        : "",
+      "Use inspect action to get detailed info about a specific deployment.",
+      "Use cancel action to cancel a building/queued deployment by URL.",
+    ]
+      .filter(Boolean)
+      .join(" "),
     promptSnippet:
       "List, inspect, or cancel Vercel deployments (status, branch, commit, URL)",
     promptGuidelines: [
       "Use vercel_deployments to check deployment status when the user asks about deploys, builds, or production state.",
+      ...(isMonorepo
+        ? [
+            `This monorepo has ${projects.length} Vercel projects: ${projectNames.join(", ")}. By default all projects are shown. Use the project parameter to filter.`,
+          ]
+        : []),
     ],
     parameters: Type.Object({
       action: StringEnum(["list", "inspect", "cancel"] as const),
@@ -188,6 +236,15 @@ export default function (pi: ExtensionAPI) {
           description: "Deployment URL for inspect or cancel action",
         })
       ),
+      ...(isMonorepo
+        ? {
+            project: Type.Optional(
+              Type.String({
+                description: `Filter by project name: ${projectNames.join(", ")}`,
+              })
+            ),
+          }
+        : {}),
     }),
 
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
@@ -226,9 +283,10 @@ export default function (pi: ExtensionAPI) {
 
       // list action
       invalidateCache();
-      const deployments = await listDeployments(pi, {
+      const deployments = await listAllDeployments(pi, projects, {
         status: params.status,
         environment: params.environment,
+        project: (params as any).project,
         limit: 10,
       });
 
@@ -239,24 +297,30 @@ export default function (pi: ExtensionAPI) {
         };
       }
 
+      const showProject = isMonorepo && !(params as any).project;
+      const projectCol = showProject ? "PROJECT".padEnd(22) : "";
+
       const lines = deployments.map((d) => {
         const icon = stateIcon(d.state);
         const target = d.target ? "production" : "preview";
+        const project = showProject
+          ? truncateCommitMsg(d.projectName ?? d.name, 20).padEnd(22)
+          : "";
         const branch = d.meta.githubCommitRef ?? "—";
         const commit = truncateCommitMsg(
           d.meta.githubCommitMessage ?? "—",
-          60
+          showProject ? 45 : 60
         );
         const time = timeAgo(d.createdAt);
-        return `${icon} ${d.state.padEnd(12)} ${target.padEnd(12)} ${branch.padEnd(20)} ${commit.padEnd(62)} ${time}`;
+        return `${icon} ${d.state.padEnd(12)} ${project}${target.padEnd(12)} ${branch.padEnd(20)} ${commit.padEnd(showProject ? 47 : 62)} ${time}`;
       });
 
-      const header = `${"STATUS".padEnd(14)} ${"TARGET".padEnd(12)} ${"BRANCH".padEnd(20)} ${"COMMIT".padEnd(62)} TIME`;
-      const text = [header, "─".repeat(120), ...lines].join("\n");
+      const header = `${"STATUS".padEnd(14)} ${projectCol}${"TARGET".padEnd(12)} ${"BRANCH".padEnd(20)} ${"COMMIT".padEnd(showProject ? 47 : 62)} TIME`;
+      const text = [header, "─".repeat(showProject ? 140 : 120), ...lines].join("\n");
 
       return {
         content: [{ type: "text", text }],
-        details: { deployments },
+        details: { deployments, projects: projectNames },
       };
     },
 
@@ -264,6 +328,9 @@ export default function (pi: ExtensionAPI) {
       let text =
         theme.fg("toolTitle", theme.bold("vercel_deployments ")) +
         theme.fg("muted", args.action);
+      if ((args as any).project) {
+        text += " " + theme.fg("accent", (args as any).project);
+      }
       if (args.status) {
         text += " " + theme.fg("dim", `status=${args.status}`);
       }
@@ -278,7 +345,7 @@ export default function (pi: ExtensionAPI) {
 
     renderResult(result, { expanded }, theme, _context) {
       const details = result.details as
-        | { deployments?: VercelDeployment[] }
+        | { deployments?: VercelDeployment[]; projects?: string[] }
         | undefined;
 
       if (!details?.deployments) {
@@ -296,11 +363,18 @@ export default function (pi: ExtensionAPI) {
         return new Text(theme.fg("dim", "No deployments found."), 0, 0);
       }
 
+      // Check if multi-project
+      const projectSet = new Set(deployments.map((d) => d.projectName ?? d.name));
+      const mp = projectSet.size > 1;
+
       // Compact view: latest deploy only
       const latest = deployments[0];
       const icon = stateIcon(latest.state);
       const colorKey = stateColorKey(latest.state);
-      let output = `${icon} ${theme.fg(colorKey, latest.state)} · ${theme.fg("accent", latest.meta.githubCommitRef ?? "—")} · ${theme.fg("muted", truncateCommitMsg(latest.meta.githubCommitMessage ?? "—", 50))} · ${theme.fg("dim", timeAgo(latest.createdAt))}`;
+      const projectLabel = mp
+        ? theme.fg("accent", `[${latest.projectName ?? latest.name}]`) + " "
+        : "";
+      let output = `${icon} ${projectLabel}${theme.fg(colorKey, latest.state)} · ${theme.fg("accent", latest.meta.githubCommitRef ?? "—")} · ${theme.fg("muted", truncateCommitMsg(latest.meta.githubCommitMessage ?? "—", 50))} · ${theme.fg("dim", timeAgo(latest.createdAt))}`;
 
       if (deployments.length > 1) {
         output += theme.fg("dim", `  (${deployments.length} total)`);
@@ -315,7 +389,10 @@ export default function (pi: ExtensionAPI) {
           const target = d.target
             ? theme.fg("success", "prod")
             : theme.fg("dim", "prev");
-          output += `\n${dIcon} ${theme.fg(dColor, d.state.padEnd(12))} ${target.padEnd(6)} ${theme.fg("accent", (d.meta.githubCommitRef ?? "—").padEnd(18))} ${theme.fg("muted", truncateCommitMsg(d.meta.githubCommitMessage ?? "—", 40))} ${theme.fg("dim", timeAgo(d.createdAt))}`;
+          const dProject = mp
+            ? theme.fg("accent", `[${truncateCommitMsg(d.projectName ?? d.name, 16)}]`.padEnd(20))
+            : "";
+          output += `\n${dIcon} ${dProject}${theme.fg(dColor, d.state.padEnd(12))} ${target.padEnd(6)} ${theme.fg("accent", (d.meta.githubCommitRef ?? "—").padEnd(18))} ${theme.fg("muted", truncateCommitMsg(d.meta.githubCommitMessage ?? "—", 40))} ${theme.fg("dim", timeAgo(d.createdAt))}`;
         }
       }
 
