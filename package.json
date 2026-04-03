@@ -1,0 +1,17 @@
+{
+  "name": "pi-vercel-deployments",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pi extension for Vercel deployment status, inspection, and cancellation",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.64.0",
+    "@mariozechner/pi-ai": "^0.64.0",
+    "@mariozechner/pi-tui": "^0.64.0",
+    "@sinclair/typebox": "^0.34.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
