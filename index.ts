@@ -209,7 +209,8 @@ export default function (pi: ExtensionAPI) {
             deployments,
             theme,
             () => done(),
-            (url: string) => cancelDeployment(pi, url)
+            (url: string) => cancelDeployment(pi, url),
+            (url: string) => { pi.exec("open", [url]); }
           );
         });
       } catch (err: any) {

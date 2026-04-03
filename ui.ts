@@ -282,7 +282,7 @@ export class DeploymentListComponent {
     }
 
     lines.push("");
-    const hints = ["↑/↓ navigate", "x cancel deploy", "Escape to close"];
+    const hints = ["↑/↓ navigate", "b open build", "x cancel deploy", "Escape to close"];
     lines.push(
       truncateToWidth(
         `  ${th.fg("dim", hints.join(" · "))}`,
@@ -375,6 +375,21 @@ export class DeploymentOverlayComponent implements Focusable {
         this.onOpenUrl(`https://${selected.url}`);
         this.statusMessage = {
           text: `Opened https://${selected.url}`,
+          type: "success",
+        };
+      }
+      return;
+    }
+
+    // Open build page with 'b'
+    if (data === "b" && this.onOpenUrl) {
+      const selected = this.deployments[this.selectedIndex];
+      if (!selected) return;
+      const dashboardUrl = getDashboardUrl(selected);
+      if (dashboardUrl) {
+        this.onOpenUrl(dashboardUrl);
+        this.statusMessage = {
+          text: `Opened ${dashboardUrl}`,
           type: "success",
         };
       }
@@ -507,7 +522,7 @@ export class DeploymentOverlayComponent implements Focusable {
     // Footer
     lines.push(emptyRow());
     lines.push(
-      row(th.fg("dim", "↑/↓ navigate · Enter open URL · x cancel · Esc close"))
+      row(th.fg("dim", "↑/↓ navigate · Enter open URL · b open build · x cancel · Esc close"))
     );
     lines.push(th.fg("border", `╰${"─".repeat(innerW)}╯`));
 
