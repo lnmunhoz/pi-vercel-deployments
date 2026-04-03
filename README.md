@@ -13,11 +13,7 @@ The extension scans your working directory and its immediate subdirectories for 
 - Deployments from **all projects are merged** and sorted by time
 - A **PROJECT column** appears in all views
 - You can **filter by project name** in the tool and command
-- The **status bar** shows a compact per-project summary
-
-```
-▲ Vercel · 🟢 admin · 🔴 rentabus-customer
-```
+- The **status bar** shows a tree-style widget with per-project deployment details
 
 For single-project repos, everything works as before — no PROJECT column, no extra noise.
 
