@@ -30,9 +30,11 @@ A persistent footer line shows the latest deployment state at a glance. Refreshe
 ▲ Vercel · ready · main · fix: update auth redirect · 12m ago
 ```
 
-**Monorepo:**
+**Monorepo** (tree-style widget with per-project details):
 ```
-▲ Vercel · 🟢 admin · 🟡 customer-app · 🟢 api
+▲ Vercel
+├─ ready · admin · main · fix: update auth redirect · 12m ago
+└─ building · customer-app · feat/checkout · add payment flow · 2m ago
 ```
 
 ### `/deployments` Command
@@ -43,7 +45,8 @@ An interactive TUI list of recent deployments with keyboard navigation.
 | --- | --- |
 | `↑` / `k` | Move selection up |
 | `↓` / `j` | Move selection down |
-| `x` | Cancel selected deployment (building/queued only) |
+| `b` | Open selected deployment's build page in the Vercel dashboard |
+| `x` | Cancel selected deployment (building/queued/initializing only) |
 | `Escape` | Close |
 
 Supports filtering by passing an argument:
@@ -63,8 +66,9 @@ A floating panel you can open from anywhere. Same navigation as the command, plu
 | Key | Action |
 | --- | --- |
 | `Enter` | Open the selected deployment URL in your browser |
+| `b` | Open the selected deployment's build page in the Vercel dashboard |
 
-In monorepo mode, the overlay shows deployments from all projects with the project name in the detail row.
+The overlay shows the full deployment URL for the currently selected item. In monorepo mode, it also displays the project name in the detail row.
 
 ### `vercel_deployments` Tool
 
@@ -76,9 +80,13 @@ An agent-callable tool so the AI can check deployment status on your behalf.
 | --- | --- | --- |
 | `list` | List recent deployments with optional filters | `status?`, `environment?`, `project?` |
 | `inspect` | Get detailed info for a specific deployment | `url` |
-| `cancel` | Cancel a building or queued deployment | `url` |
+| `cancel` | Cancel a building, queued, or initializing deployment | `url` |
 
 The `project` parameter is available in monorepos and lets the agent filter to a specific project by name.
+
+Tool results include rich rendering in the terminal:
+- **Compact view** — shows the latest deployment with status icon, branch, commit, and time
+- **Expanded view** — shows all returned deployments in a formatted table (click to expand in Pi)
 
 Example prompts:
 
@@ -135,6 +143,7 @@ vercel link --scope my-team -p customer-app
 2. **Per-project queries** — shells out to `vercel list --cwd <dir>` for each discovered project
 3. **Aggregation** — merges deployments from all projects, sorted by creation time
 4. **Caching** — results are cached per-project for 30 seconds to avoid excessive CLI calls
+5. **Dashboard URLs** — resolves Vercel dashboard links via `vercel inspect`, using `--scope` with the org ID for correct team context
 
 The extension gracefully handles missing prerequisites:
 
