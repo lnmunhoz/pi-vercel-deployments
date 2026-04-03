@@ -62,16 +62,36 @@ export default function (pi: ExtensionAPI) {
       if (deployments.length === 0) return;
 
       if (isMonorepo) {
-        // Show compact multi-project status
-        const parts = deployments.slice(0, projects.length).map((d) => {
-          const icon = stateIcon(d.state);
+        // Group latest deployment per project
+        const latestByProject = new Map<string, VercelDeployment>();
+        for (const d of deployments) {
           const name = d.projectName ?? d.name;
-          return `${icon} ${name}`;
-        });
-        ctx.ui.setStatus(
-          "vercel",
-          theme.fg("dim", `▲ Vercel · ${parts.join(" · ")}`)
-        );
+          if (!latestByProject.has(name)) {
+            latestByProject.set(name, d);
+          }
+        }
+
+        const entries = [...latestByProject.entries()];
+        const lines: string[] = [
+          theme.fg("dim", "▲ Vercel"),
+        ];
+
+        for (let i = 0; i < entries.length; i++) {
+          const [name, d] = entries[i];
+          const isLast = i === entries.length - 1;
+          const branch = d.meta.githubCommitRef ?? "?";
+          const time = timeAgo(d.createdAt);
+          const commit = truncateCommitMsg(d.meta.githubCommitMessage ?? "", 30);
+          const connector = isLast ? "└─" : "├─";
+          const colorKey = stateColorKey(d.state);
+          lines.push(
+            theme.fg("dim", `${connector} `) +
+            theme.fg(colorKey, d.state.toLowerCase()) +
+            theme.fg("dim", ` · ${name} · ${branch} · ${commit} · ${time}`)
+          );
+        }
+
+        ctx.ui.setWidget("vercel", lines);
       } else {
         // Single project — original behavior
         const latest = deployments[0];

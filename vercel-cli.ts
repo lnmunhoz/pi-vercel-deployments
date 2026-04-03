@@ -281,3 +281,19 @@ export function isCancellable(state: VercelDeployment["state"]): boolean {
 export function invalidateCache(): void {
   listCacheByProject.clear();
 }
+
+/**
+ * Build the Vercel dashboard URL for a deployment.
+ * Format: https://vercel.com/{team}/{project}/{deployment-url}
+ * The team slug is extracted from the deployment URL: {name}-{hash}-{team}.vercel.app
+ */
+export function getDashboardUrl(deployment: VercelDeployment): string | null {
+  if (!deployment.url) return null;
+
+  const withoutSuffix = deployment.url.replace(".vercel.app", "");
+  const parts = withoutSuffix.split("-");
+  const team = parts[parts.length - 1];
+  const project = deployment.projectName ?? deployment.name;
+
+  return `https://vercel.com/${team}/${project}/${deployment.url}`;
+}

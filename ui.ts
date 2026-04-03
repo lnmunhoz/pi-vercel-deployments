@@ -5,7 +5,7 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Focusable } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { type VercelDeployment, type VercelProject, isCancellable } from "./vercel-cli.js";
+import { type VercelDeployment, type VercelProject, isCancellable, getDashboardUrl } from "./vercel-cli.js";
 
 type DeployState = VercelDeployment["state"];
 
@@ -107,6 +107,7 @@ export class DeploymentListComponent {
   private theme: Theme;
   private onClose: () => void;
   private onCancel?: CancelRequest;
+  private onOpenUrl?: OpenUrlRequest;
   private selectedIndex = 0;
   private statusMessage?: { text: string; type: "info" | "success" | "error" };
   private cancelling = false;
@@ -118,12 +119,14 @@ export class DeploymentListComponent {
     deployments: VercelDeployment[],
     theme: Theme,
     onClose: () => void,
-    onCancel?: CancelRequest
+    onCancel?: CancelRequest,
+    onOpenUrl?: OpenUrlRequest
   ) {
     this.deployments = deployments;
     this.theme = theme;
     this.onClose = onClose;
     this.onCancel = onCancel;
+    this.onOpenUrl = onOpenUrl;
     this.multiProject = isMultiProject(deployments);
   }
 
@@ -149,6 +152,22 @@ export class DeploymentListComponent {
       );
       this.statusMessage = undefined;
       this.invalidate();
+      return;
+    }
+
+    // Open build page with 'b'
+    if (data === "b" && this.onOpenUrl) {
+      const selected = this.deployments[this.selectedIndex];
+      if (!selected) return;
+      const dashboardUrl = getDashboardUrl(selected);
+      if (dashboardUrl) {
+        this.onOpenUrl(dashboardUrl);
+        this.statusMessage = {
+          text: `Opened ${dashboardUrl}`,
+          type: "success",
+        };
+        this.invalidate();
+      }
       return;
     }
 
