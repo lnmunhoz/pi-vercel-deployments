@@ -136,12 +136,13 @@ export class DeploymentListComponent {
   }
 
   handleInput(data: string): void {
-    if (this.cancelling) return;
-
+    // Always allow closing
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       this.onClose();
       return;
     }
+
+    if (this.cancelling || this.opening) return;
 
     if (matchesKey(data, "up") || data === "k") {
       this.selectedIndex = Math.max(0, this.selectedIndex - 1);
@@ -358,13 +359,13 @@ export class DeploymentOverlayComponent implements Focusable {
   }
 
   handleInput(data: string): void {
-    if (this.cancelling || this.opening) return;
-
+    // Always allow closing
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       this.done();
       return;
     }
 
+    if (this.cancelling || this.opening) return;
     if (this.loading || this.deployments.length === 0) return;
 
     if (matchesKey(data, "up") || data === "k") {
