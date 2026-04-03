@@ -18,6 +18,7 @@ import {
   listAllDeployments,
   inspectDeployment,
   cancelDeployment,
+  getDashboardUrl,
   invalidateCache,
   isCancellable,
   type VercelDeployment,
@@ -45,6 +46,15 @@ export default function (pi: ExtensionAPI) {
   const projectNames = projects.map((p) => p.name);
 
   let statusInterval: ReturnType<typeof setInterval> | undefined;
+
+  // Shared callback: resolve dashboard URL via inspect, then open in browser
+  async function openBuild(deployment: VercelDeployment): Promise<string | null> {
+    const url = await getDashboardUrl(pi, deployment, projects);
+    if (url) {
+      pi.exec("open", [url]);
+    }
+    return url;
+  }
 
   // --- Verify CLI availability ---
   async function checkVercelCli(): Promise<boolean> {
@@ -155,7 +165,8 @@ export default function (pi: ExtensionAPI) {
             theme,
             () => done(),
             (url: string) => cancelDeployment(pi, url),
-            (url: string) => { pi.exec("open", [url]); }
+            (url: string) => { pi.exec("open", [url]); },
+            openBuild
           );
 
           // Fetch in background, update when ready
@@ -210,7 +221,8 @@ export default function (pi: ExtensionAPI) {
             theme,
             () => done(),
             (url: string) => cancelDeployment(pi, url),
-            (url: string) => { pi.exec("open", [url]); }
+            (url: string) => { pi.exec("open", [url]); },
+            openBuild
           );
         });
       } catch (err: any) {

@@ -5,7 +5,7 @@
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import type { Focusable } from "@mariozechner/pi-tui";
 import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
-import { type VercelDeployment, type VercelProject, isCancellable, getDashboardUrl } from "./vercel-cli.js";
+import { type VercelDeployment, type VercelProject, isCancellable } from "./vercel-cli.js";
 
 type DeployState = VercelDeployment["state"];
 
@@ -98,6 +98,7 @@ export function formatDeploymentLine(
 
 export type CancelRequest = (url: string) => Promise<{ success: boolean; message: string }>;
 export type OpenUrlRequest = (url: string) => void;
+export type OpenBuildRequest = (deployment: VercelDeployment) => Promise<string | null>;
 
 /**
  * Deployment list UI component for /deployments command
@@ -108,9 +109,11 @@ export class DeploymentListComponent {
   private onClose: () => void;
   private onCancel?: CancelRequest;
   private onOpenUrl?: OpenUrlRequest;
+  private onOpenBuild?: OpenBuildRequest;
   private selectedIndex = 0;
   private statusMessage?: { text: string; type: "info" | "success" | "error" };
   private cancelling = false;
+  private opening = false;
   private cachedWidth?: number;
   private cachedLines?: string[];
   private multiProject: boolean;
@@ -120,13 +123,15 @@ export class DeploymentListComponent {
     theme: Theme,
     onClose: () => void,
     onCancel?: CancelRequest,
-    onOpenUrl?: OpenUrlRequest
+    onOpenUrl?: OpenUrlRequest,
+    onOpenBuild?: OpenBuildRequest
   ) {
     this.deployments = deployments;
     this.theme = theme;
     this.onClose = onClose;
     this.onCancel = onCancel;
     this.onOpenUrl = onOpenUrl;
+    this.onOpenBuild = onOpenBuild;
     this.multiProject = isMultiProject(deployments);
   }
 
@@ -156,18 +161,23 @@ export class DeploymentListComponent {
     }
 
     // Open build page with 'b'
-    if (data === "b" && this.onOpenUrl) {
+    if (data === "b" && this.onOpenBuild && !this.opening) {
       const selected = this.deployments[this.selectedIndex];
       if (!selected) return;
-      const dashboardUrl = getDashboardUrl(selected);
-      if (dashboardUrl) {
-        this.onOpenUrl(dashboardUrl);
-        this.statusMessage = {
-          text: `Opened ${dashboardUrl}`,
-          type: "success",
-        };
+
+      this.opening = true;
+      this.statusMessage = { text: "Opening build page...", type: "info" };
+      this.invalidate();
+
+      this.onOpenBuild(selected).then((url) => {
+        this.opening = false;
+        if (url) {
+          this.statusMessage = { text: `Opened ${url}`, type: "success" };
+        } else {
+          this.statusMessage = { text: "Failed to resolve build page URL", type: "error" };
+        }
         this.invalidate();
-      }
+      });
       return;
     }
 
@@ -313,9 +323,11 @@ export class DeploymentOverlayComponent implements Focusable {
   private done: (result: void) => void;
   private onCancel?: CancelRequest;
   private onOpenUrl?: OpenUrlRequest;
+  private onOpenBuild?: OpenBuildRequest;
   private selectedIndex = 0;
   private statusMessage?: { text: string; type: "info" | "success" | "error" };
   private cancelling = false;
+  private opening = false;
   private loading: boolean;
   private multiProject = false;
 
@@ -324,13 +336,15 @@ export class DeploymentOverlayComponent implements Focusable {
     theme: Theme,
     done: (result: void) => void,
     onCancel?: CancelRequest,
-    onOpenUrl?: OpenUrlRequest
+    onOpenUrl?: OpenUrlRequest,
+    onOpenBuild?: OpenBuildRequest
   ) {
     this.deployments = deployments ?? [];
     this.theme = theme;
     this.done = done;
     this.onCancel = onCancel;
     this.onOpenUrl = onOpenUrl;
+    this.onOpenBuild = onOpenBuild;
     this.loading = deployments === null;
     if (deployments) {
       this.multiProject = isMultiProject(deployments);
@@ -344,7 +358,7 @@ export class DeploymentOverlayComponent implements Focusable {
   }
 
   handleInput(data: string): void {
-    if (this.cancelling) return;
+    if (this.cancelling || this.opening) return;
 
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       this.done();
@@ -382,17 +396,21 @@ export class DeploymentOverlayComponent implements Focusable {
     }
 
     // Open build page with 'b'
-    if (data === "b" && this.onOpenUrl) {
+    if (data === "b" && this.onOpenBuild) {
       const selected = this.deployments[this.selectedIndex];
       if (!selected) return;
-      const dashboardUrl = getDashboardUrl(selected);
-      if (dashboardUrl) {
-        this.onOpenUrl(dashboardUrl);
-        this.statusMessage = {
-          text: `Opened ${dashboardUrl}`,
-          type: "success",
-        };
-      }
+
+      this.opening = true;
+      this.statusMessage = { text: "Opening build page...", type: "info" };
+
+      this.onOpenBuild(selected).then((url) => {
+        this.opening = false;
+        if (url) {
+          this.statusMessage = { text: `Opened ${url}`, type: "success" };
+        } else {
+          this.statusMessage = { text: "Failed to resolve build page URL", type: "error" };
+        }
+      });
       return;
     }
 

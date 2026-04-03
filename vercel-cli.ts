@@ -283,17 +283,47 @@ export function invalidateCache(): void {
 }
 
 /**
- * Build the Vercel dashboard URL for a deployment.
- * Format: https://vercel.com/{team}/{project}/{deployment-url}
- * The team slug is extracted from the deployment URL: {name}-{hash}-{team}.vercel.app
+ * Build the Vercel dashboard URL for a deployment by calling `vercel inspect`.
+ * Uses --scope with the orgId from the project config to ensure correct team context.
+ * Format: https://vercel.com/{contextName}/{project}/{id_without_dpl_prefix}
  */
-export function getDashboardUrl(deployment: VercelDeployment): string | null {
+export async function getDashboardUrl(
+  pi: ExtensionAPI,
+  deployment: VercelDeployment,
+  projects?: VercelProject[]
+): Promise<string | null> {
   if (!deployment.url) return null;
 
-  const withoutSuffix = deployment.url.replace(".vercel.app", "");
-  const parts = withoutSuffix.split("-");
-  const team = parts[parts.length - 1];
-  const project = deployment.projectName ?? deployment.name;
+  try {
+    const args = ["inspect", deployment.url, "--format=json"];
 
-  return `https://vercel.com/${team}/${project}/${deployment.url}`;
+    // Find the matching project to get the orgId for --scope
+    const project = projects?.find(
+      (p) => p.name === deployment.projectName || p.dir === deployment.projectDir
+    );
+    if (project?.orgId) {
+      args.push("--scope", project.orgId);
+    } else if (deployment.projectDir) {
+      args.push("--cwd", deployment.projectDir);
+    }
+
+    const result = await pi.exec("vercel", args, { timeout: 15_000 });
+
+    // vercel inspect writes JSON to stderr for error deployments (exit code 1)
+    // but still outputs valid JSON, so try parsing from both stdout and stderr
+    const output = result.stdout.trim() || result.stderr.trim();
+    const jsonStart = output.indexOf("{");
+    if (jsonStart === -1) return null;
+
+    const parsed = JSON.parse(output.slice(jsonStart));
+    const id = (parsed.id as string)?.replace(/^dpl_/, "");
+    const contextName = parsed.contextName as string;
+    const name = parsed.name as string;
+
+    if (!id || !contextName || !name) return null;
+
+    return `https://vercel.com/${contextName}/${name}/${id}`;
+  } catch {
+    return null;
+  }
 }
